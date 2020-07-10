@@ -4,6 +4,8 @@ from snappy import ProductIO
 from snappy import HashMap
 from snappy import jpy
 from snappy import WKTReader
+from snappy import GeoPos
+from snappy import PixelPos
 import subprocess
 from time import *
 import glob
@@ -18,6 +20,9 @@ def read(filename):
 
 def write(product, filename):
     ProductIO.writeProduct(product, filename, "BEAM-DIMAP")
+
+def write_netcdf(product, filename):
+    ProductIO.writeProduct(product, filename, 'NetCDF4-CF')
 
 def topsar_split(product):
     parameters.put('subswath', 'IW2')
@@ -80,14 +85,14 @@ def create_subset(product):
     parameters.put('geoRegion', geom)
     return GPF.createProduct('Subset', parameters, product)
 
-def unwrap_snaphu():
-    temp_path = os.path.join(path2zipfolder, 'snaphu_AT2')
-    product = os.path.join(path2zipfolder, 'results2.dim')
+def unwrap_snaphu_Displacement(product, temp_path):
+    # temp_path = os.path.join(path2zipfolder, 'snaphu_AT2')
+    # product = os.path.join(path2zipfolder, 'results2.dim')
     parameters = HashMap()
     parameters_snaphu = HashMap()
     parameters_snaphu.put("targetFolder", str(temp_path))
-    inputfile = ProductIO.readProduct(str(product))
-    result_SNE = GPF.createProduct("SnaphuExport", parameters_snaphu, inputfile)
+    # inputfile = ProductIO.readProduct(str(product))
+    result_SNE = GPF.createProduct("SnaphuExport", parameters_snaphu, product)
     ProductIO.writeProduct(result_SNE, temp_path, "Snaphu")
     infile = os.path.join(temp_path, "snaphu.conf")
     with open(str(infile)) as lines:
@@ -107,14 +112,41 @@ def unwrap_snaphu():
     ProductIO.writeProduct(unwrapped_read, fn, "BEAM-DIMAP")
     unwrapped = ProductIO.readProduct(fn)
     snaphu_files = jpy.array('org.esa.snap.core.datamodel.Product', 2)
-    snaphu_files[0] = inputfile
+    snaphu_files[0] = product
     snaphu_files[1] = unwrapped
     result_SI = GPF.createProduct("SnaphuImport", parameters, snaphu_files)
     result_PD = GPF.createProduct("PhaseToDisplacement", parameters, result_SI)
-    outpath = os.path.join(path2zipfolder, 'DisplacementVert')
-    ProductIO.writeProduct(result_PD, outpath, "BEAM-DIMAP")
+    return result_PD
+    # outpath = os.path.join(path2zipfolder, 'DisplacementVert')
+    # ProductIO.writeProduct(result_PD, outpath, "BEAM-DIMAP")
 
+### TERRAIN CORRECTION
+def terrain_correction(product):
+    parameters.put('demResamplingMethod', 'BILINEAR_INTERPOLATION')
+    parameters.put('imgResamplingMethod', 'BILINEAR_INTERPOLATION')
+    # parameters.put('demResamplingMethod', 'NEAREST_NEIGHBOUR')
+    # parameters.put('imgResamplingMethod', 'NEAREST_NEIGHBOUR')
+    parameters.put('demName', 'SRTM 3Sec')
+    # parameters.put('pixelSpacingInMeter', 10.0)
+    parameters.put('sourceBands', 'displacement')
+    parameters.put('saveLocalIncidenceAngle', True)
+    parameters.put('saveLatLon', True)
 
+    # parameters.put('incidenceAngle', 'Use local incidence angle from Ellipsoid')
+
+    return GPF.createProduct("Terrain-Correction", parameters, product)
+
+"""https://senbox.atlassian.net/wiki/spaces/SNAP/pages/19300362/How+to+use+the+SNAP+API+from+Python"""
+def bandMathsProduct(product):
+    BandDescriptor = jpy.get_type('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor')
+    targetBand = BandDescriptor()
+    targetBand.name = 'displacement_v2'
+    targetBand.type = 'float32'
+    targetBand.expression = 'displacement_VV * cos(localIncidenceAngle)'
+    targetBands = jpy.array('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor', 1)
+    targetBands[0] = targetBand
+    parameters.put('targetBands', targetBands)
+    return GPF.createProduct('BandMaths', parameters, product)
 
 def insar_pipeline(filename_1, filename_2):
 
@@ -148,16 +180,52 @@ def insar_pipeline(filename_1, filename_2):
     print('Create subset')
     Subset = create_subset(Goldstein_phasefiltering)
 
-    print('Writing final wrapped product')
-    path2zipfolder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    fp_out = os.path.join(path2zipfolder,'results2')
-    write(Subset, fp_out)
+    # print('Writing final wrapped product')
+    # path2zipfolder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    # fp_out = os.path.join(path2zipfolder,'results2')
+    # write(Subset, fp_out)
 
-    print('Snaphu unwrapping')
-    unwrap_snaphu()
+    print('Snaphu unwrapping and displacement calculation')
+    tempPath = os.path.join(path2zipfolder, 'snaphu_AT2')
+    if not os.path.exists(tempPath):
+        os.makedirs(tempPath)
+    Displacement = unwrap_snaphu_Displacement(Subset, tempPath)
+
+    print('Perform terrain correction')
+    terrainCorrected = terrain_correction(Displacement)
+
+    print('Calculate vertical displacement')
+    verticalDisplacement = bandMathsProduct(terrainCorrected)
+
+    print('Write result to NetCDF4-CF file')
+    write_netcdf(verticalDisplacement, os.path.join(path2zipfolder,'Vertical_Displacement'))
 
 
 path2zipfolder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 fn1 = os.path.join(path2zipfolder, 'S1A_IW_SLC__1SDV_20150402T173247_20150402T173314_005308_006B81_76C8.zip')
 fn2 = os.path.join(path2zipfolder, 'S1A_IW_SLC__1SDV_20150601T173250_20150601T173317_006183_0080D8_1DFD.zip')
 insar_pipeline(fn1, fn2)
+
+
+
+# print('Reading SAR data')
+# filename_1 = os.path.join(path2zipfolder, 'DisplacementVert.dim')
+# product_1 = read(filename_1)
+# terrain_corrected = terrain_correction(product_1)
+# fp_out = os.path.join(path2zipfolder,'results_TC_888')
+# write_netcdf(terrain_corrected, fp_out)
+
+
+
+
+
+
+
+
+
+# vertical_displacement = bandMathsProduct(product_1)
+# fp_out = os.path.join(path2zipfolder,'results_verticaldisp')
+# write(vertical_displacement, fp_out)
+
+"""https://gist.github.com/braunfuss/41caab61817fbae71a25bba82a02a8c0"""
+"""https://forum.step.esa.int/t/snappy-sarsim-terrain-correction-runtimeerror-java-lang-nullpointerexception/8804"""
