@@ -6,10 +6,12 @@ from snappy import jpy
 from snappy import WKTReader
 import subprocess
 import glob
+import shutil
+import sys
+import gc
 
-# Hashmap is used to provide access to all JAVA operators
-HashMap = jpy.get_type('java.util.HashMap')
-parameters = HashMap()
+
+
 
 def read(filename):
     return ProductIO.readProduct(filename)
@@ -20,18 +22,27 @@ def write(product, filename):
 def write_netcdf(product, filename):
     ProductIO.writeProduct(product, filename, 'NetCDF4-CF')
 
-def topsar_split(product):
-    parameters.put('subswath', 'IW2')
+def topsar_split(product, IW):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
+    parameters.put('subswath', IW)
     parameters.put('selectedPolarisations', 'VV')
     return GPF.createProduct("TOPSAR-Split", parameters, product)
 
 def apply_orbit_file(product):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
     parameters.put("Orbit State Vectors", "Sentinel Precise (Auto Download)")
     parameters.put("Polynomial Degree", 3)
     return GPF.createProduct("Apply-Orbit-File", parameters, product)
 
 
 def back_geocoding(product):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
     parameters.put("Digital Elevation Model", "SRTM 1Sec HGT (Auto Download)")
     parameters.put("DEM Resampling Method", "BICUBIC_INTERPOLATION")
     parameters.put("Resampling Type", "BISINC_5_POINT_INTERPOLATION")
@@ -41,6 +52,9 @@ def back_geocoding(product):
 
 
 def interferogram(product):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
     parameters.put("Subtract flat-earth phase", True)
     parameters.put("Degree of \"Flat Earth\" polynomial", 5)
     parameters.put("Number of \"Flat Earth\" estimation points", 501)
@@ -53,10 +67,16 @@ def interferogram(product):
     return GPF.createProduct("Interferogram", parameters, product)
 
 def topsar_deburst(product):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
     parameters.put("Polarisations", "VV")
     return GPF.createProduct("TOPSAR-Deburst", parameters, product)
 
 def topophase_removal(product):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
     parameters.put("Orbit Interpolation Degree", 3)
     parameters.put("Digital Elevation Model", "SRTM 1Sec HGT (Auto Download)")
     parameters.put("Tile Extension[%]", 100)
@@ -66,6 +86,9 @@ def topophase_removal(product):
 
 
 def goldstein_phasefiltering(product):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
     parameters.put("Adaptive Filter Exponent in(0,1]:", 1.0)
     parameters.put("FFT Size", 64)
     parameters.put("Window Size", 3)
@@ -74,6 +97,9 @@ def goldstein_phasefiltering(product):
     return GPF.createProduct("GoldsteinPhaseFiltering", parameters, product)
 
 def create_subset(product):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
     """obtain polygon with VERTEX"""
     wkt = "POLYGON((4.3108 51.8655,4.416 51.8655,4.416 51.9163,4.3108 51.9163,4.3108 51.8655))"
     geom = WKTReader().read(wkt)
@@ -82,6 +108,8 @@ def create_subset(product):
     return GPF.createProduct('Subset', parameters, product)
 
 def unwrap_snaphu_Displacement(product, temp_path):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
     parameters = HashMap()
     parameters_snaphu = HashMap()
     parameters_snaphu.put("targetFolder", str(temp_path))
@@ -113,6 +141,9 @@ def unwrap_snaphu_Displacement(product, temp_path):
 
 ### TERRAIN CORRECTION
 def terrain_correction(product):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
     parameters.put('demResamplingMethod', 'BILINEAR_INTERPOLATION') #alternatively use 'NEAREST_NEIGHBOUR'
     parameters.put('imgResamplingMethod', 'BILINEAR_INTERPOLATION')
     parameters.put('demName', 'SRTM 3Sec')
@@ -124,6 +155,9 @@ def terrain_correction(product):
     return GPF.createProduct("Terrain-Correction", parameters, product)
 
 def bandMathsProduct(product):
+    # Hashmap is used to provide access to all JAVA operators
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
     BandDescriptor = jpy.get_type('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor')
     targetBand = BandDescriptor()
     targetBand.name = 'displacement_vertical'
@@ -141,8 +175,9 @@ def insar_pipeline(filename_1, filename_2):
     product_2 = read(filename_2)
 
     print('TOPSAR-Split')
-    product_TOPSAR_1 = topsar_split(product_1)
-    product_TOPSAR_2 = topsar_split(product_2)
+
+    product_TOPSAR_1 = topsar_split(product_1, 'IW1')
+    product_TOPSAR_2 = topsar_split(product_2, 'IW1')
 
     print('Applying precise orbit files')
     product_orbitFile_1 = apply_orbit_file(product_TOPSAR_1)
@@ -181,15 +216,31 @@ def insar_pipeline(filename_1, filename_2):
     verticalDisplacement = bandMathsProduct(terrainCorrected)
 
     print('Write result to NetCDF4-CF file')
-    write_netcdf(verticalDisplacement, os.path.join(outputPath,'Vertical_Displacement'))
+    write_netcdf(verticalDisplacement, os.path.join(outputPath, fileOut))
     print('Write result to BEAM-DIMAP')
-    write(verticalDisplacement, os.path.join(outputPath,'Vertical_Displacement'))
+    write(verticalDisplacement, os.path.join(outputPath, fileOut))
+    print('Done writing results')
+    print('Delete snaphu output')
+    shutil.rmtree(snaphuPath)
+
 
 
 path2input = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'input'))
-fn1 = os.path.join(path2input, 'S1A_IW_SLC__1SDV_20150402T173247_20150402T173314_005308_006B81_76C8.zip')
-fn2 = os.path.join(path2input, 'S1A_IW_SLC__1SDV_20150601T173250_20150601T173317_006183_0080D8_1DFD.zip')
-insar_pipeline(fn1, fn2)
+infile_list = os.listdir(path2input)
+infile_list = [f for f in infile_list if f.endswith('.zip')]
+print(infile_list)
+
+"""iterate through input files in pairs of two in order to create a time series"""
+for master, slave in zip(infile_list, infile_list[1:]):
+    print('master, slave: ', master, slave)
+    fn1 = os.path.join(path2input, master)
+    fn2 = os.path.join(path2input, slave)
+    date_start = master.split('_')[6]
+    date_end = slave.split('_')[6]
+    fileOut = 'Vertical_Displacement_%s_%s' %(date_start, date_end)
+    insar_pipeline(fn1, fn2)
+    gc.collect()
+
 
 ### USEFUL LINKS
 """SAR data (fn1 and fn2) were downloaded from https://search.asf.alaska.edu/#/
