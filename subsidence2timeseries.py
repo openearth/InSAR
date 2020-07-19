@@ -24,7 +24,10 @@ def plotVerticalMotion(orig):
         input_nc = Dataset(fp, 'r', format='NetCDF4')
         lat = input_nc.variables['lat'][:]
         lon = input_nc.variables['lon'][:]
-        vh = input_nc.variables['displacement_vertical'][:]
+        vh = input_nc.variables['displacement_VV'][:]
+        LIA = input_nc.variables['localIncidenceAngle'][:]
+
+        # vh = vh*np.cos(np.deg2rad(LIA))
 
         destination_list = zip(lon, lat)
         destinations = MultiPoint([Point(p) for p in destination_list])
@@ -42,9 +45,14 @@ def plotVerticalMotion(orig):
     df.drop(['datestring'], axis=1, inplace=True)
     df.set_index('date', inplace=True)
     df.plot( color='green', marker='o')
-    fp = os.path.join(dir_input,'verticalMotion.png')
+    plt.title('coordinates: (-44.1201639, -20.1196056)')
+    fp = os.path.join(dir_input,'LOSMotion.png')
     plt.savefig(fp)
     plt.close()
 
-orig_pt = Point(4.35, 51.9)
+
+
+orig_pt = Point(-44.1201639, -20.1196056)
+# orig_pt = Point(4.35, 51.9)
+
 plotVerticalMotion(orig_pt)
