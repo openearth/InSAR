@@ -10,9 +10,6 @@ import shutil
 import sys
 import gc
 
-
-
-
 def read(filename):
     return ProductIO.readProduct(filename)
 
@@ -38,7 +35,6 @@ def apply_orbit_file(product):
     parameters.put("Polynomial Degree", 3)
     return GPF.createProduct("Apply-Orbit-File", parameters, product)
 
-
 def back_geocoding(product):
     # Hashmap is used to provide access to all JAVA operators
     HashMap = jpy.get_type('java.util.HashMap')
@@ -49,7 +45,6 @@ def back_geocoding(product):
     parameters.put("Mask out areas with no elevation", True)
     parameters.put("Output Deramp and Demod Phase", True)
     return GPF.createProduct("Back-Geocoding", parameters, product)
-
 
 def interferogram(product):
     # Hashmap is used to provide access to all JAVA operators
@@ -84,14 +79,12 @@ def topophase_removal(product):
     parameters.put("Output elevation band", False)
     return GPF.createProduct("TopoPhaseRemoval", parameters, product)
 
-def multi_looking(product):
+def multi_looking(product): #"""not used for Faraz's work"""
     HashMap = jpy.get_type('java.util.HashMap')
     parameters = HashMap()
     parameters.put('grSquarePixel', True)
     parameters.put('nRgLooks', 3)
-    # parameters.put('nAzLooks', 1)
     parameters.put('outputIntensity', False)
-    # parameters.put('sourceBands', source)
     return GPF.createProduct("MultiLook", parameters, product)
 
 def goldstein_phasefiltering(product):
@@ -101,51 +94,50 @@ def goldstein_phasefiltering(product):
     parameters.put("Adaptive Filter Exponent in(0,1]:", 1.0)
     # parameters.put("FFT Size", 64)
     # parameters.put("Window Size", 3)
-    parameters.put("Use coherence mask", False)
-    parameters.put("Coherence Threshold in[0,1]:", 0.2)
+    parameters.put("Use coherence mask", True)
+    parameters.put("Coherence Threshold in[0,1]:", 0.4) #0.7 at least or 0.6 were used by SkyGeo...hmmm
     return GPF.createProduct("GoldsteinPhaseFiltering", parameters, product)
 
 def create_subset(product, wkt):
-    # Hashmap is used to provide access to all JAVA operators
     HashMap = jpy.get_type('java.util.HashMap')
     parameters = HashMap()
     """obtain polygon with VERTEX"""
-
     geom = WKTReader().read(wkt)
     parameters.put('copyMetadata', True)
     parameters.put('geoRegion', geom)
     return GPF.createProduct('Subset', parameters, product)
 
-def unwrap_snaphu(product, temp_path):
+def export_snaphu(product, snaphu_dir):
     # Hashmap is used to provide access to all JAVA operators
     HashMap = jpy.get_type('java.util.HashMap')
     parameters = HashMap()
-    parameters_snaphu = HashMap()
-    parameters_snaphu.put("targetFolder", str(temp_path))
-    # parameters_snaphu.put('Number of Tile Rows', 5)
-    # parameters_snaphu.put('Number of Tile Columns', 5)
-    parameters_snaphu.put('Number of Processors', 4)
-    result_SNE = GPF.createProduct("SnaphuExport", parameters_snaphu, product)
-    ProductIO.writeProduct(result_SNE, temp_path, "Snaphu")
-    infile = os.path.join(temp_path, "snaphu.conf")
+    parameters.put("targetFolder", snaphu_dir)
+    parameters.put("statCostMode", "DEFO")
+    parameters.put("initMethod", "MCF")
+    parameters.put("numberOfTileRows", 5)
+    parameters.put("numberOfTileCols", 5)
+    parameters.put("numberOfProcessors", 4)
+    parameters.put("rowOverlap", 200)
+    parameters.put("colOverlap", 200)
+    parameters.put("tileCostThreshold", 500)
+
+    return GPF.createProduct("SnaphuExport", parameters, product)
+
+def unwrap_snaphu(snaphu_dir):
+    infile = os.path.join(snaphu_dir, "snaphu.conf")
     with open(str(infile)) as lines:
         line = lines.readlines()[6]
         snaphu_string = line[1:].strip()
         snaphu_args = snaphu_string.split()
-    process = subprocess.Popen(snaphu_args, cwd=str(temp_path))
+    process = subprocess.Popen(snaphu_args, cwd=str(snaphu_dir))
     process.communicate()
     process.wait()
     print('done')
 
-
-    unwrapped_list = glob.glob(str(temp_path) + "/UnwPhase*.hdr")
-    unwrapped_hdr = str(unwrapped_list[0])
-    unwrapped_read = ProductIO.readProduct(unwrapped_hdr)
-    fn = os.path.join(temp_path, "unwrapped_read.dim")
-
-    ProductIO.writeProduct(unwrapped_read, fn, "BEAM-DIMAP")
-    unwrapped = ProductIO.readProduct(fn)
-
+def import_snaphu(product, snaphu_dir):
+    parameters = HashMap()
+    unwrapped_list = glob.glob(str(snaphu_dir) + "/UnwPhase*.hdr")
+    unwrapped = ProductIO.readProduct(str(unwrapped_list[0]))
     snaphu_files = jpy.array('org.esa.snap.core.datamodel.Product', 2)
     snaphu_files[0] = product
     snaphu_files[1] = unwrapped
@@ -157,40 +149,39 @@ def PhaseToDisplacement(product):
     result_PD = GPF.createProduct("PhaseToDisplacement", parameters, product)
     return result_PD
 
-### TERRAIN CORRECTION
-def terrain_correction(product):
-    # Hashmap is used to provide access to all JAVA operators
-    HashMap = jpy.get_type('java.util.HashMap')
-    parameters = HashMap()
-    parameters.put('demResamplingMethod', 'BILINEAR_INTERPOLATION') #alternatively use 'NEAREST_NEIGHBOUR'
-    parameters.put('imgResamplingMethod', 'BILINEAR_INTERPOLATION')
-    parameters.put('demName', 'SRTM 3Sec')
-    # parameters.put('pixelSpacingInMeter', 15.0)
-    parameters.put('sourceBands', 'displacement')
-    parameters.put('saveLocalIncidenceAngle', True)
-    parameters.put('saveLatLon', True)
-    # parameters.put('incidenceAngle', 'Use local incidence angle from Ellipsoid')
-    return GPF.createProduct("Terrain-Correction", parameters, product)
-
-def bandMathsProduct(product):
-    # Hashmap is used to provide access to all JAVA operators
-    HashMap = jpy.get_type('java.util.HashMap')
-    parameters = HashMap()
-    BandDescriptor = jpy.get_type('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor')
-    targetBand = BandDescriptor()
-    targetBand.name = 'displacement_vertical'
-    targetBand.type = 'float32'
-    targetBand.expression = 'displacement_VV * cos(localIncidenceAngle)'
-    targetBands = jpy.array('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor', 1)
-    targetBands[0] = targetBand
-    parameters.put('targetBands', targetBands)
-    return GPF.createProduct('BandMaths', parameters, product)
 def merge(product1, product2):
     sourceProducts = HashMap()
     sourceProducts.put('masterProduct', product1)
     sourceProducts.put('slaveProduct', product2)
     parameters = HashMap()
     return GPF.createProduct('Merge', parameters, sourceProducts)
+
+
+def terrain_correction(product):
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
+    parameters.put('demResamplingMethod', 'BILINEAR_INTERPOLATION') #alternatively use 'NEAREST_NEIGHBOUR' or cubic
+    parameters.put('imgResamplingMethod', 'BILINEAR_INTERPOLATION')
+    parameters.put('demName', 'SRTM 3Sec')
+    # parameters.put('pixelSpacingInMeter', 15.0)
+    parameters.put('saveLocalIncidenceAngle', True)
+    parameters.put('saveLatLon', True)
+    return GPF.createProduct("Terrain-Correction", parameters, product)
+
+def bandMathsProduct(product):
+    HashMap = jpy.get_type('java.util.HashMap')
+    parameters = HashMap()
+    BandDescriptor = jpy.get_type('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor')
+    targetBand = BandDescriptor()
+    bands = list(product.getBandNames())
+    coh = [b for b in bands if b.startswith('coh')][0]
+    targetBand.name = 'displacement_coh'
+    targetBand.type = 'float32'
+    targetBand.expression = 'IF %s <=0.3 THEN NaN ELSE displacement_VV' %coh
+    targetBands = jpy.array('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor', 1)
+    targetBands[0] = targetBand
+    parameters.put('targetBands', targetBands)
+    return GPF.createProduct('BandMaths', parameters, product)
 
 def insar_pipeline(filename_1, filename_2):
 
@@ -219,77 +210,95 @@ def insar_pipeline(filename_1, filename_2):
     print('TopoPhase removal')
     TOPO_phase_removal =topophase_removal(TOPSAR_deburst)
 
+    ##removing multi-looking to increase resolution for comparison
     print('Multi-looking')
     MultiLook = multi_looking(TOPO_phase_removal)
 
     print('Goldstein filtering')
     Goldstein_phasefiltering = goldstein_phasefiltering(MultiLook)
 
-    print('Create subset')
-    # poly = "POLYGON((-44.1941 -20.3335,-43.9049 -20.3335,-43.9049 -20.0225,-44.1941 -20.0225,-44.1941 -20.3335))"
-    poly = "POLYGON((-44.1417 -20.1408,-44.1 -20.1408,-44.1 -20.1066,-44.1417 -20.1066,-44.1417 -20.1408))"
+    print('Create subset_0')
+    poly = "POLYGON((-44.1434 -20.1344,-44.1125 -20.1344,-44.1125 -20.1128,-44.1434 -20.1128,-44.1434 -20.1344))"
     Subset = create_subset(Goldstein_phasefiltering, poly)
 
+    print('Export to Snaphu')
+    exportedProduct = export_snaphu(Subset, snaphuDir)
+    ProductIO.writeProduct(exportedProduct, snaphuDir, "Snaphu")
+
     print('Snaphu unwrapping')
-    outputPath = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'output'))
-    if not os.path.exists(outputPath):
-        os.makedirs(outputPath)
-    snaphuPath = os.path.join(outputPath, 'snaphu')
+    unwrap_snaphu(snaphuDir)
 
-    # Displacement = unwrap_snaphu_Displacement(Subset, snaphuPath)
-    print('Unwrap with Snaphu and import to SNAP')
-    unwrappedProduct = unwrap_snaphu(Subset, snaphuPath)
+    print('Import unwrapped hdr to SNAP')
+    importedProduct = import_snaphu(Subset, snaphuDir)
 
-    print('Calculate displacement from unwrapped phase')
-    displacementProduct = PhaseToDisplacement(unwrappedProduct)
+    print('create even smaller subset of importdProduct')
+    poly = "POLYGON((-44.1202760265804 -20.122412144896483, -44.1227375652734 -20.118146220374225, -44.12117821949503 -20.116219314519526," \
+           " -44.117224164128444 -20.12200003208363, -44.117224164128444 -20.12200003208363, -44.1202760265804 -20.122412144896483))"
+    Subset2 = create_subset(importedProduct, poly)
+
+    print('Calculate displacement from phase')
+    displacementProduct = PhaseToDisplacement(Subset2)
+
+    print('Merge to add coherence back into displacementProduct')
+    mergedProduct = merge(Subset2, displacementProduct)
 
     print('Perform terrain correction')
-    terrainCorrected = terrain_correction(displacementProduct)
+    terrainCorrectedProduct = terrain_correction(mergedProduct)
 
-    # print('Calculate vertical displacement')
-    #
-    # verticalDisplacement = bandMathsProduct(terrainCorrected)
-    #
-    # print('merging')
-    # mergedProduct = merge(verticalDisplacement, terrainCorrected)
-    #
-    # print('Write result to NetCDF4-CF file')
-    # write_netcdf(terrainCorrected, os.path.join(outputPath, fileOut))
-    print('Write result to BEAM-DIMAP')
-    write(terrainCorrected, os.path.join(outputPath, fileOut))
-    # # write(mergedProduct, os.path.join(outputPath, fileOut))
-    # print('Done writing results')
+    print('Perform band maths to mask displacements with coherence less than a set threshold')
 
-    terrainCorrected.dispose()
-    displacementProduct.dispose()
-    unwrappedProduct.dispose()
-    Subset.dispose()
-    Goldstein_phasefiltering.dispose()
-    TOPO_phase_removal.dispose()
-    TOPSAR_deburst.dispose()
-    product_orbitFile_1.dispose()
-    product_orbitFile_2.dispose()
+    maskedDisplacementProduct = bandMathsProduct(terrainCorrectedProduct)
+
+    print('second merge to put coherence with displacement')
+    mergedProduct2 = merge(maskedDisplacementProduct, terrainCorrectedProduct)
+    write(mergedProduct2, fileOut)
+    write_netcdf(mergedProduct2, fileOut)
+
+    print('dispose of products to prevent memory leakage')
     product_1.dispose()
     product_2.dispose()
+    product_TOPSAR_1.dispose()
+    product_TOPSAR_2.dispose()
+    product_orbitFile_1.dispose()
+    product_orbitFile_2.dispose()
+    backGeocoding.dispose()
+    interferogram_formation.dispose()
+    TOPSAR_deburst.dispose()
+    TOPO_phase_removal.dispose()
+    MultiLook.dispose()
+    Goldstein_phasefiltering.dispose()
+    Subset.dispose()
+    importedProduct.dispose()
+    Subset2.dispose()
+    displacementProduct.dispose()
+    mergedProduct.dispose()
+    maskedDisplacementProduct.dispose()
+    mergedProduct2.dispose()
 
     print('Delete snaphu output')
-    shutil.rmtree(snaphuPath)
-
+    shutil.rmtree(snaphuDir)
 
 path2input = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'input'))
 infile_list = os.listdir(path2input)
 infile_list = [f for f in infile_list if f.endswith('.zip')]
-print(infile_list)
 
 """iterate through input files in pairs of two in order to create a time series"""
-for master, slave in zip(infile_list, infile_list[1:]):
+for master, slave in zip(infile_list, infile_list[1::]):
     print('master, slave: ', master, slave)
     fn1 = os.path.join(path2input, master)
     fn2 = os.path.join(path2input, slave)
     date_start = master.split('_')[6]
     date_end = slave.split('_')[6]
-    fileOut = 'Displacement_LOS_%s_%s' % (date_start, date_end)
+
+    outputPath = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'output'))
+    if not os.path.exists(outputPath):
+        os.makedirs(outputPath)
+    snaphuDir = os.path.join(outputPath, 'snaphu')
+    fileOut = os.path.join(outputPath, 'Masked_Displacement_%s_%s' % (date_start, date_end))
+
+
     insar_pipeline(fn1, fn2)
+
     gc.collect()
 
 
@@ -301,3 +310,5 @@ for master, slave in zip(infile_list, infile_list[1:]):
 """https://senbox.atlassian.net/wiki/spaces/SNAP/pages/19300362/How+to+use+the+SNAP+API+from+Python"""
 """https://gist.github.com/braunfuss/41caab61817fbae71a25bba82a02a8c0"""
 """https://forum.step.esa.int/t/snappy-sarsim-terrain-correction-runtimeerror-java-lang-nullpointerexception/8804"""
+"""http://step.esa.int/docs/tutorials/S1TBX%20Stripmap%20Interferometry%20with%20ERS%20Tutorial.pdf"""
+"""https://forum.step.esa.int/t/call-productset-reader-and-create-stack-in-snap/4290/3"""
